@@ -1,0 +1,32 @@
+version: "2"
+
+linters:
+  # Keeps the standard set (errcheck, govet, ineffassign, staticcheck, unused)
+  # and adds a few high-signal extras.
+  enable:
+    - bodyclose
+    - misspell
+    - revive
+    - unconvert
+    - unparam
+  settings:
+    misspell:
+      ignore-rules:
+        - wille # the module owner / import path, not a typo of "will"
+  exclusions:
+    generated: lax
+    rules:
+      # Test helpers and assertions intentionally ignore some errors.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/wille/gh-actions-cli

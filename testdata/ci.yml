@@ -1,0 +1,14 @@
+name: CI
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup
+        uses: actions/setup-node@v4.0.2
+      - uses: "actions/cache@v3" # caching
+      - uses: actions/upload-artifact@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v4
+      - uses: ./.github/actions/local
+      - uses: docker://alpine:3.20
+      - run: echo "not a uses line"
