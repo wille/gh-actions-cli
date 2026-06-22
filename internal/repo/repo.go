@@ -8,25 +8,28 @@ import (
 	"strings"
 )
 
-// Repo identifies a GitHub repository.
+// Repo identifies a GitHub (or GitHub Enterprise) repository.
 type Repo struct {
+	Host  string // e.g. "github.com" or "ghe.example.com"
 	Owner string
 	Repo  string
 }
 
 var (
-	urlRE       = regexp.MustCompile(`github\.com[:/]([^/]+)/(.+?)(?:\.git)?/?$`)
-	shorthandRE = regexp.MustCompile(`^([^/\s]+)/([^/\s]+?)(?:\.git)?$`)
+	// host (must contain a dot) then owner/repo, from https/ssh/scp-style URLs.
+	urlRE = regexp.MustCompile(`^(?:(?:https?|ssh)://)?(?:git@)?([A-Za-z0-9.-]+\.[A-Za-z0-9-]+)[:/]([^/\s]+)/(.+?)(?:\.git)?/?$`)
+	// "owner/repo" shorthand — first segment has no dot so it can't be a host.
+	shorthandRE = regexp.MustCompile(`^([^/\s.]+)/([^/\s]+?)(?:\.git)?$`)
 )
 
-// ParseRepo extracts owner/repo from a GitHub remote URL (https or ssh) or
-// "owner/repo" shorthand. Returns false when nothing matches.
+// ParseRepo extracts host/owner/repo from a remote URL (https or ssh) or an
+// "owner/repo" shorthand (host defaults to github.com). Returns false on no match.
 func ParseRepo(input string) (Repo, bool) {
 	if m := urlRE.FindStringSubmatch(input); m != nil {
-		return Repo{Owner: m[1], Repo: m[2]}, true
+		return Repo{Host: m[1], Owner: m[2], Repo: m[3]}, true
 	}
 	if m := shorthandRE.FindStringSubmatch(input); m != nil {
-		return Repo{Owner: m[1], Repo: m[2]}, true
+		return Repo{Host: "github.com", Owner: m[1], Repo: m[2]}, true
 	}
 	return Repo{}, false
 }

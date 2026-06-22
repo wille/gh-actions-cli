@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -76,11 +77,16 @@ func main() {
 	}
 	listCmd.Flags().BoolVar(&listOpts.JSON, "json", false, "output the inventory as JSON")
 	listCmd.Flags().BoolVar(&listOpts.Offline, "offline", false, "skip the GitHub API (no latest-version lookup)")
+	listCmd.Flags().BoolVar(&listOpts.Outdated, "outdated", false, "only show actions with a newer version available")
+	listCmd.Flags().BoolVar(&listOpts.Unpinned, "unpinned", false, "only show actions not pinned to a commit SHA")
 
 	root.AddCommand(pinCmd, updateCmd, statsCmd, listCmd)
 
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		// ErrCheckFailed means "exit non-zero, output already shown" — no message.
+		if !errors.Is(err, command.ErrCheckFailed) {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		os.Exit(1)
 	}
 }

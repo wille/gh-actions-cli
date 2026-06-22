@@ -70,10 +70,18 @@ func resolveToken() string {
 	return ""
 }
 
-// New constructs a client, resolving a token if one is available.
-func New() *Client {
+// New constructs a client for the given host, resolving a token if available.
+// host "" or "github.com" uses the public API; any other host is treated as a
+// GitHub Enterprise Server instance (API at https://<host>/api/v3/).
+func New(host string) *Client {
 	token := resolveToken()
 	gh := github.NewClient(nil)
+	if host != "" && host != "github.com" {
+		base := "https://" + host + "/api/v3/"
+		if c, err := gh.WithEnterpriseURLs(base, base); err == nil {
+			gh = c
+		}
+	}
 	if token != "" {
 		gh = gh.WithAuthToken(token)
 	}

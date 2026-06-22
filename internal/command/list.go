@@ -16,8 +16,10 @@ import (
 
 // ListOptions configures the list command.
 type ListOptions struct {
-	JSON    bool
-	Offline bool
+	JSON     bool
+	Offline  bool
+	Outdated bool // only show outdated actions
+	Unpinned bool // only show floating (not SHA-pinned) actions
 }
 
 type listRow struct {
@@ -78,7 +80,7 @@ func RunList(paths []string, opts ListOptions) error {
 	// Enrich with latest versions unless offline.
 	latestByRepo := map[string]string{}
 	if !opts.Offline {
-		gh := ghclient.New()
+		gh := ghclient.New("")
 		gh.WarnIfUnauthenticated()
 		latestByRepo = latestVersions(gh, allRefs, !opts.JSON)
 	}
@@ -89,6 +91,21 @@ func RunList(paths []string, opts ListOptions) error {
 		r.current = currentVersion(r.ref)
 		r.latest = latestByRepo[r.ref.Owner+"/"+r.ref.Repo]
 		r.outdated = r.latest != "" && version.IsOutdated(r.current, r.latest)
+	}
+
+	// Apply filters (AND semantics).
+	if opts.Outdated || opts.Unpinned {
+		kept := rows[:0]
+		for _, r := range rows {
+			if opts.Outdated && !r.outdated {
+				continue
+			}
+			if opts.Unpinned && r.pinned {
+				continue
+			}
+			kept = append(kept, r)
+		}
+		rows = kept
 	}
 
 	if opts.JSON {

@@ -8,9 +8,13 @@ func TestParseRepo(t *testing.T) {
 		want      Repo
 		wantMatch bool
 	}{
-		{"https://github.com/actions/checkout.git", Repo{"actions", "checkout"}, true},
-		{"git@github.com:actions/checkout.git", Repo{"actions", "checkout"}, true},
-		{"actions/checkout", Repo{"actions", "checkout"}, true},
+		{"https://github.com/actions/checkout.git", Repo{"github.com", "actions", "checkout"}, true},
+		{"git@github.com:actions/checkout.git", Repo{"github.com", "actions", "checkout"}, true},
+		{"actions/checkout", Repo{"github.com", "actions", "checkout"}, true},
+		{"https://ghe.example.com/org/tools.git", Repo{"ghe.example.com", "org", "tools"}, true},
+		{"git@ghe.example.com:org/tools.git", Repo{"ghe.example.com", "org", "tools"}, true},
+		{"ghe.example.com/org/tools", Repo{"ghe.example.com", "org", "tools"}, true},
+		{"github.com/actions/checkout", Repo{"github.com", "actions", "checkout"}, true},
 		{"not a repo", Repo{}, false},
 	}
 	for _, c := range cases {

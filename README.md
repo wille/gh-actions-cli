@@ -2,14 +2,14 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/wille/gh-actions-cli.svg)](https://pkg.go.dev/github.com/wille/gh-actions-cli)
 [![Go Report Card](https://goreportcard.com/badge/github.com/wille/gh-actions-cli)](https://goreportcard.com/report/github.com/wille/gh-actions-cli)
-[![Latest release](https://img.shields.io/github/v/release/wille/gh-actions-cli?sort=semver&style=flat-square)](https://github.com/wille/gh-actions-cli/releases)
+[![Latest release](https://img.shields.io/github/v/release/wille/gh-actions-cli?sort=semver)](https://github.com/wille/gh-actions-cli/releases)
 [![Go version](https://img.shields.io/github/go-mod/go-version/wille/gh-actions-cli)](go.mod)
 [![License: MIT](https://img.shields.io/github/license/wille/gh-actions-cli)](LICENSE)
 
 `gha` is a CLI for managing the GitHub Actions used across
 your repositories — straight from the terminal:
 
-- 📌 **Pin** actions to immutable commit SHAs.
+- 📌 **Pin** actions to immutable commit SHAs (and fail CI on anything unpinned).
 - ⬆️ **Interactively update** actions to their latest releases.
 - 📊 **Analyze** workflow run health — success rates and durations.
 
@@ -33,7 +33,7 @@ go build -o gha ./cmd/gha
 
 ```bash
 gha list [paths...]      # inventory: which actions are pinned and current
-gha pin [paths...]       # preview the actions that would be pinned
+gha pin [paths...]       # preview the actions that would be pinned (fails CI if any)
 gha pin --yes            # pin them (writes files)
 gha update [paths...]    # interactively pick actions to update
 gha update --yes         # update every outdated action
@@ -58,6 +58,7 @@ version, and — looked up from the GitHub API — the latest available version:
 ```
 
 - `--offline` skips the API for an instant pinned/floating-only view.
+- `--outdated` / `--unpinned` narrow the list to just those actions.
 - `--json` emits the inventory as structured JSON.
 
 ### `gha pin`
@@ -87,6 +88,10 @@ actions are surfaced with a clear warning:
 Already-pinned actions are left untouched, and your formatting and comments are
 preserved. Local (`./…`) and `docker://…` references are skipped.
 
+`gha pin` **exits non-zero when unpinned actions remain**, so you can run it in CI
+to fail a build that introduces an unpinned action — and `gha pin --yes` in a fix
+step to lock them down.
+
 ### `gha update`
 
 Shows each action's current version next to its latest release, grouped by
@@ -113,10 +118,11 @@ actions/checkout · branch main · since 2026-06-15
 
 WORKFLOW         RUNS  SUCCESS     p50     p95  SLOWEST  LAST
 Build and Test    100     99%   2m 28s  3m 40s  6m 02s  ✓ 2h ago
-Dependabot         50     20%   1m 39s   2m 1s   2m 1s  ✗ 4d ago   ⚠ flaky
+Dependabot         50     20%   1m 39s   2m 1s   2m 1s  ✗ 4d ago
 ```
 
-- `--repo owner/repo` — target a repo other than the current git remote.
+- `--repo owner/repo` — target a repo other than the current git remote. A host
+  prefix (`ghe.example.com/owner/repo`) targets a GitHub Enterprise Server instance.
 - `--branch <name>` — filter runs by branch.
 - `--since <window>` — how far back to analyze runs (default `7d`; e.g. `2w`, `24h`).
 - `--jobs` — per-job breakdown for the slowest workflow.

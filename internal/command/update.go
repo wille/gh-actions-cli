@@ -66,7 +66,7 @@ func RunUpdate(paths []string, opts UpdateOptions) error {
 		return nil
 	}
 
-	gh := ghclient.New()
+	gh := ghclient.New("")
 	gh.WarnIfUnauthenticated()
 
 	type entry struct {

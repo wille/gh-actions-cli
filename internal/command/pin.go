@@ -40,7 +40,7 @@ func RunPin(paths []string, opts PinOptions) error {
 		return nil
 	}
 
-	gh := ghclient.New()
+	gh := ghclient.New("")
 	gh.WarnIfUnauthenticated()
 
 	var plans []plannedPin
@@ -81,6 +81,13 @@ func RunPin(paths []string, opts PinOptions) error {
 	}
 
 	printSummary(len(plans), skipped, errored, opts.Apply)
+
+	// Fail (non-zero exit) when unpinned actions remain unfixed — lets `gha pin`
+	// gate CI. In preview mode any planned pin counts; in --yes mode only
+	// unresolved refs do (everything resolvable was just written).
+	if errored > 0 || (!opts.Apply && len(plans) > 0) {
+		return ErrCheckFailed
+	}
 	return nil
 }
 

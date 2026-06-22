@@ -68,7 +68,7 @@ func RunStats(workflowArg string, opts StatsOptions) error {
 	if err != nil {
 		return err
 	}
-	owner, repoName := r.Owner, r.Repo
+	owner, repoName, host := r.Owner, r.Repo, r.Host
 
 	window, err := parseSince(opts.Since)
 	if err != nil {
@@ -77,7 +77,7 @@ func RunStats(workflowArg string, opts StatsOptions) error {
 	since := time.Now().Add(-window)
 	sinceLabel := since.Format("2006-01-02")
 
-	gh := ghclient.New()
+	gh := ghclient.New(host)
 	gh.WarnIfUnauthenticated()
 
 	// No spinner in JSON mode — it would corrupt machine output.
@@ -172,7 +172,7 @@ func RunStats(workflowArg string, opts StatsOptions) error {
 	fmt.Printf("\n%s %s\n\n",
 		ui.Bold(fmt.Sprintf("%s/%s", owner, repoName)),
 		ui.Dim(fmt.Sprintf("· branch %s · since %s", branch, sinceLabel)))
-	renderTable(results, owner, repoName)
+	renderTable(results, host, owner, repoName)
 
 	if opts.Jobs {
 		focus := results[0]
@@ -209,7 +209,7 @@ func toSamples(runs []ghclient.WorkflowRun) []stats.RunSample {
 	return out
 }
 
-func renderTable(results []wfResult, owner, repoName string) {
+func renderTable(results []wfResult, host, owner, repoName string) {
 	type row struct {
 		name, runs, success, p50, p95, slowest string
 		url                                    string
@@ -218,7 +218,7 @@ func renderTable(results []wfResult, owner, repoName string) {
 	rows := make([]row, len(results))
 	for i, res := range results {
 		s := res.stats
-		rw := row{name: s.Name, runs: strconv.Itoa(s.Runs), url: workflowURL(owner, repoName, res.meta.Path)}
+		rw := row{name: s.Name, runs: strconv.Itoa(s.Runs), url: workflowURL(host, owner, repoName, res.meta.Path)}
 		if s.Runs > 0 {
 			rw.success = fmt.Sprintf("%d%%", int(s.SuccessRate*100+0.5))
 			rw.p50 = stats.FmtDuration(s.P50Ms)
@@ -365,12 +365,12 @@ func emptyResult(spin *ui.Spinner, asJSON bool, message, owner, repoName, branch
 	spin.Stop(ui.Yellow(message))
 }
 
-func workflowURL(owner, repoName, path string) string {
+func workflowURL(host, owner, repoName, path string) string {
 	file := path
 	if i := strings.LastIndex(path, "/"); i >= 0 {
 		file = path[i+1:]
 	}
-	return fmt.Sprintf("https://github.com/%s/%s/actions/workflows/%s", owner, repoName, file)
+	return fmt.Sprintf("https://%s/%s/%s/actions/workflows/%s", host, owner, repoName, file)
 }
 
 // fmtAgo renders compact relative time like "2h ago", "3d ago".
