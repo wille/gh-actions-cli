@@ -22,10 +22,17 @@ type Client struct {
 	gh            *github.Client
 	Authenticated bool
 
-	sem       chan struct{}
-	sf        singleflight.Group
-	shaCache  sync.Map // "owner/repo@ref" -> string
-	tagsCache sync.Map // "owner/repo" -> []string
+	sem         chan struct{}
+	sf          singleflight.Group
+	commitCache sync.Map // "owner/repo@ref" -> commitInfo
+	tagsCache   sync.Map // "owner/repo" -> []string
+}
+
+// commitInfo caches both facts one GetCommit call returns, so resolving a
+// ref's SHA and its commit date share a single API request.
+type commitInfo struct {
+	sha  string
+	date time.Time
 }
 
 // WorkflowMeta is the subset of a workflow we need.
@@ -101,28 +108,42 @@ func (c *Client) release() { <-c.sem }
 
 // ResolveSha resolves a tag/branch/sha to a full commit SHA (cached, deduped).
 func (c *Client) ResolveSha(owner, repo, ref string) (string, error) {
+	info, err := c.commit(owner, repo, ref)
+	return info.sha, err
+}
+
+// CommitDate returns the commit date of a tag/branch/sha (cached, deduped).
+func (c *Client) CommitDate(owner, repo, ref string) (time.Time, error) {
+	info, err := c.commit(owner, repo, ref)
+	return info.date, err
+}
+
+func (c *Client) commit(owner, repo, ref string) (commitInfo, error) {
 	key := owner + "/" + repo + "@" + ref
-	if v, ok := c.shaCache.Load(key); ok {
-		return v.(string), nil
+	if v, ok := c.commitCache.Load(key); ok {
+		return v.(commitInfo), nil
 	}
-	v, err, _ := c.sf.Do("sha:"+key, func() (any, error) {
-		if v, ok := c.shaCache.Load(key); ok {
-			return v.(string), nil
+	v, err, _ := c.sf.Do("commit:"+key, func() (any, error) {
+		if v, ok := c.commitCache.Load(key); ok {
+			return v.(commitInfo), nil
 		}
 		c.acquire()
 		defer c.release()
 		commit, _, err := c.gh.Repositories.GetCommit(context.Background(), owner, repo, ref, nil)
 		if err != nil {
-			return "", err
+			return commitInfo{}, err
 		}
-		sha := commit.GetSHA()
-		c.shaCache.Store(key, sha)
-		return sha, nil
+		info := commitInfo{
+			sha:  commit.GetSHA(),
+			date: commit.GetCommit().GetCommitter().GetDate().Time,
+		}
+		c.commitCache.Store(key, info)
+		return info, nil
 	})
 	if err != nil {
-		return "", err
+		return commitInfo{}, err
 	}
-	return v.(string), nil
+	return v.(commitInfo), nil
 }
 
 // ListTags returns all tag names for a repo (paginated, cached, deduped).

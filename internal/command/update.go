@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wille/gh-actions-cli/internal/discover"
@@ -21,10 +22,11 @@ type UpdateOptions struct {
 }
 
 type candidate struct {
-	file    string
-	ref     parse.UsesRef
-	current string
-	latest  string
+	file     string
+	ref      parse.UsesRef
+	current  string
+	latest   string
+	released time.Time // commit date of the latest tag; zero if lookup failed
 }
 
 var commentVerRE = regexp.MustCompile(`#\s*(\S+)`)
@@ -50,6 +52,15 @@ func releaseURL(c candidate) string {
 // it would be bumped to (matching the list command's linked action names).
 func linkedAction(c candidate) string {
 	return ui.Cyan(ui.Link(c.ref.Action, releaseURL(c)))
+}
+
+// releasedAgo renders the time since the latest version's release, e.g.
+// "(released 3mo ago)", or "" when the date lookup failed.
+func releasedAgo(c candidate) string {
+	if c.released.IsZero() {
+		return ""
+	}
+	return ui.Dim(fmt.Sprintf("(released %s)", fmtAgoTime(c.released)))
 }
 
 // RunUpdate shows current vs latest versions and re-pins selected actions.
@@ -104,6 +115,24 @@ func RunUpdate(paths []string, opts UpdateOptions) error {
 			candidates = append(candidates, candidate{file: e.file, ref: e.ref, current: cur, latest: latest})
 		}
 	}
+	// Fetch each candidate's release date (commit date of the latest tag).
+	// This also warms the client's commit cache, so re-pinning the chosen
+	// actions below needs no further API calls.
+	if len(candidates) > 0 {
+		spin := ui.NewSpinner("Fetching release dates")
+		var wg sync.WaitGroup
+		for i := range candidates {
+			wg.Add(1)
+			go func(c *candidate) {
+				defer wg.Done()
+				if d, err := gh.CommitDate(c.ref.Owner, c.ref.Repo, c.latest); err == nil {
+					c.released = d
+				}
+			}(&candidates[i])
+		}
+		wg.Wait()
+		spin.Stop("")
+	}
 	// Group by workflow file, alphabetical by action within each file.
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].file != candidates[j].file {
@@ -126,7 +155,8 @@ func RunUpdate(paths []string, opts UpdateOptions) error {
 				currentFile = c.file
 				fmt.Printf("\n%s\n", ui.Bold(c.file))
 			}
-			fmt.Printf("  %s  %s → %s\n", linkedAction(c), ui.Dim(c.current), ui.Green(c.latest))
+			fmt.Println(strings.TrimRight(fmt.Sprintf("  %s  %s → %s %s",
+				linkedAction(c), ui.Dim(c.current), ui.Green(c.latest), releasedAgo(c)), " "))
 		}
 	} else {
 		// One row per candidate, grouped by workflow file. Toggling a file
@@ -135,10 +165,11 @@ func RunUpdate(paths []string, opts UpdateOptions) error {
 		items := make([]ui.SelectItem, len(candidates))
 		for i, c := range candidates {
 			hint := ui.Dim(fmt.Sprintf("(line %d)", c.ref.Line+1))
-			items[i] = ui.SelectItem{
-				Group: c.file,
-				Label: fmt.Sprintf("%s  %s → %s   %s", linkedAction(c), ui.Dim(c.current), ui.Green(c.latest), hint),
+			label := fmt.Sprintf("%s  %s → %s", linkedAction(c), ui.Dim(c.current), ui.Green(c.latest))
+			if ago := releasedAgo(c); ago != "" {
+				label += " " + ago
 			}
+			items[i] = ui.SelectItem{Group: c.file, Label: label + "   " + hint}
 		}
 		selected, ok, err := ui.SelectGrouped(
 			"Select actions to update (re-pinned to the new version's SHA):", items)

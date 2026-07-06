@@ -379,6 +379,11 @@ func fmtAgo(iso string) string {
 	if err != nil {
 		return ""
 	}
+	return fmtAgoTime(t)
+}
+
+// fmtAgoTime renders compact relative time like "2h ago", "3d ago", "5mo ago".
+func fmtAgoTime(t time.Time) string {
 	sec := int(time.Since(t).Seconds())
 	if sec < 0 {
 		sec = 0
@@ -394,7 +399,14 @@ func fmtAgo(iso string) string {
 	if hrs < 24 {
 		return fmt.Sprintf("%dh ago", hrs)
 	}
-	return fmt.Sprintf("%dd ago", hrs/24)
+	days := hrs / 24
+	if days < 30 {
+		return fmt.Sprintf("%dd ago", days)
+	}
+	if days < 365 {
+		return fmt.Sprintf("%dmo ago", days/30)
+	}
+	return fmt.Sprintf("%dy ago", days/365)
 }
 
 func padLeft(s string, w int) string {
