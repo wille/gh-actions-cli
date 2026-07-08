@@ -9,7 +9,8 @@ your repositories — straight from the terminal:
 
 - 📌 **Pin** actions to immutable commit SHAs (and fail CI on anything unpinned).
 - ⬆️ **Interactively update** actions to their latest releases.
-- 📊 **Analyze** workflow run health — success rates and durations.
+- 📊 **Analyze** workflow run health — success rates, durations, and billable minutes.
+- 🛡️ **Lock down** the repo's allowed-actions policy to exactly what your workflows use.
 
 ## Install
 
@@ -36,6 +37,8 @@ gha pin --yes            # pin them (writes files)
 gha update [paths...]    # interactively pick actions to update
 gha update --yes         # update every outdated action
 gha stats [workflow]     # workflow run success rates and durations
+gha policy               # repo's allowed-actions policy vs what your workflows use
+gha policy --yes         # apply the generated policy to the repo settings
 ```
 
 With no paths, `gha` scans `.github/workflows/*.{yml,yaml}` and composite
@@ -136,6 +139,54 @@ from the billing usage report:
 ```
 Billable 2026-07 (repo total): 23h 57m — Actions Linux 19h 2m · Actions Linux 4-core 4h 55m · $6.83 net
 ```
+
+### `gha policy`
+
+By default, any action by any author may run in your repository. GitHub's
+[allowed-actions policy](https://docs.github.com/en/rest/actions/permissions)
+can restrict that to an explicit allowlist — `gha policy` generates the
+tightest allowlist that keeps your current workflows running and compares it
+with the repo's settings:
+
+```
+wille/gh-actions-cli · Actions policy
+
+Current (repo settings)
+  Actions enabled       yes
+  Allowed actions       all   ⚠ any action by any author may run
+  SHA pinning required  no
+
+Proposed · from 6 reference(s) across 2 file(s)
+  Allowed actions       selected
+  GitHub-owned allowed  yes
+  Verified creators     no
+  Allowed patterns
+    golangci/golangci-lint-action@*
+    goreleaser/goreleaser-action@*
+  SHA pinning required  yes
+```
+
+Actions under `actions/*` and `github/*` are covered by the policy's
+"GitHub-owned" switch; every other action becomes an `owner/repo@*` pattern, so
+`gha update` version bumps never require a policy change while unvetted actions
+stay blocked. When an allowlist is already in force, the output diffs it
+against your workflows (`+` used but not allowed, `-` allowed but unused).
+
+It previews by default and writes nothing until you pass `--yes`. Applying also
+enables GitHub's **require SHA pinning** setting — the platform-level
+counterpart to `gha pin`, making GitHub itself reject workflows with floating
+refs — but only once every local ref is actually pinned (otherwise the policy
+would break your own workflows; run `gha pin --yes` first). Pass
+`--no-require-pin` to opt out. An already-enabled pinning requirement is never
+downgraded.
+
+- `--repo owner/repo` — target a repo other than the current git remote (the
+  proposal is always generated from the local workflow files).
+- `--json` — emit both policies as JSON.
+
+Reading and writing these settings requires repo admin access. If an
+organization-level policy pins the repo's settings, applying fails with a
+conflict — apply it at the org level instead.
 
 ## Authentication
 

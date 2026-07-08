@@ -80,7 +80,22 @@ func main() {
 	listCmd.Flags().BoolVar(&listOpts.Outdated, "outdated", false, "only show actions with a newer version available")
 	listCmd.Flags().BoolVar(&listOpts.Unpinned, "unpinned", false, "only show actions not pinned to a commit SHA")
 
-	root.AddCommand(pinCmd, updateCmd, statsCmd, listCmd)
+	// policy
+	var polOpts command.PolicyOptions
+	policyCmd := &cobra.Command{
+		Use:   "policy [paths...]",
+		Short: "Show the repo's allowed-actions policy next to one generated from your workflows. Previews by default; pass --yes to apply.",
+		RunE: func(_ *cobra.Command, args []string) error {
+			return command.RunPolicy(args, polOpts)
+		},
+	}
+	policyCmd.Flags().StringVar(&polOpts.Repo, "repo", "", "target repo (default: the origin git remote)")
+	policyCmd.Flags().BoolVar(&polOpts.JSON, "json", false, "output the policies as JSON")
+	policyCmd.Flags().BoolVarP(&polOpts.Apply, "yes", "y", false, "apply the proposed policy to the repo settings")
+	policyCmd.Flags().BoolVar(&polOpts.NoRequirePin, "no-require-pin", false, "do not enable GitHub's SHA pinning requirement when applying")
+	policyCmd.MarkFlagsMutuallyExclusive("json", "yes")
+
+	root.AddCommand(pinCmd, updateCmd, statsCmd, listCmd, policyCmd)
 
 	if err := root.Execute(); err != nil {
 		// ErrCheckFailed means "exit non-zero, output already shown" — no message.

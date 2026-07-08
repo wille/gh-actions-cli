@@ -228,11 +228,6 @@ func (c *Client) RepoBillableMinutes(owner, repo string, year int, month int) (R
 func (c *Client) billableUsage(ownerKind, owner, repo string, year, month int) (RepoBillableUsage, error) {
 	c.acquire()
 	defer c.release()
-	u := fmt.Sprintf("%s/%s/settings/billing/usage?year=%d&month=%d", ownerKind, owner, year, month)
-	req, err := c.gh.NewRequest("GET", u, nil)
-	if err != nil {
-		return RepoBillableUsage{}, err
-	}
 	var report struct {
 		UsageItems []struct {
 			Product        string  `json:"product"`
@@ -243,7 +238,8 @@ func (c *Client) billableUsage(ownerKind, owner, repo string, year, month int) (
 			RepositoryName string  `json:"repositoryName"`
 		} `json:"usageItems"`
 	}
-	if _, err := c.gh.Do(context.Background(), req, &report); err != nil {
+	u := fmt.Sprintf("%s/%s/settings/billing/usage?year=%d&month=%d", ownerKind, owner, year, month)
+	if err := c.rawGet(u, &report); err != nil {
 		return RepoBillableUsage{}, err
 	}
 	usage := RepoBillableUsage{MinutesBySKU: map[string]float64{}}
@@ -255,6 +251,91 @@ func (c *Client) billableUsage(ownerKind, owner, repo string, year, month int) (
 		usage.NetUSD += item.NetAmount
 	}
 	return usage, nil
+}
+
+// SelectedActions is the allowlist in force when a policy's AllowedActions is
+// "selected".
+type SelectedActions struct {
+	GithubOwnedAllowed bool     `json:"github_owned_allowed"`
+	VerifiedAllowed    bool     `json:"verified_allowed"`
+	PatternsAllowed    []string `json:"patterns_allowed"`
+}
+
+// ActionsPolicy is a repo's Actions permissions policy.
+type ActionsPolicy struct {
+	Enabled            bool   // whether Actions can run at all
+	AllowedActions     string // "all", "local_only", or "selected"
+	ShaPinningRequired bool   // GitHub rejects workflows with non-SHA refs
+	Selected           *SelectedActions
+}
+
+// ActionsPolicy fetches the repo's Actions permissions, including the
+// selected-actions allowlist when one is in force. Uses raw requests because
+// go-github v66 predates the sha_pinning_required field.
+func (c *Client) ActionsPolicy(owner, repo string) (ActionsPolicy, error) {
+	c.acquire()
+	defer c.release()
+	var perms struct {
+		Enabled            bool   `json:"enabled"`
+		AllowedActions     string `json:"allowed_actions"`
+		ShaPinningRequired bool   `json:"sha_pinning_required"`
+	}
+	if err := c.rawGet(fmt.Sprintf("repos/%s/%s/actions/permissions", owner, repo), &perms); err != nil {
+		return ActionsPolicy{}, err
+	}
+	policy := ActionsPolicy{
+		Enabled:            perms.Enabled,
+		AllowedActions:     perms.AllowedActions,
+		ShaPinningRequired: perms.ShaPinningRequired,
+	}
+	// The selected-actions endpoint 409s unless allowed_actions is "selected".
+	if perms.AllowedActions == "selected" {
+		var sel SelectedActions
+		if err := c.rawGet(fmt.Sprintf("repos/%s/%s/actions/permissions/selected-actions", owner, repo), &sel); err != nil {
+			return ActionsPolicy{}, err
+		}
+		policy.Selected = &sel
+	}
+	return policy, nil
+}
+
+// SetActionsPolicy applies a selected-actions policy: allowed_actions is set
+// to "selected" and the allowlist written. requirePin additionally turns on
+// SHA pinning enforcement; false leaves the repo's current setting untouched
+// (this never downgrades an already-enabled requirement). A 409 from GitHub
+// usually means an org-level policy pins the repo's settings.
+func (c *Client) SetActionsPolicy(owner, repo string, selected SelectedActions, requirePin bool) error {
+	c.acquire()
+	defer c.release()
+	perms := map[string]any{"enabled": true, "allowed_actions": "selected"}
+	if requirePin {
+		perms["sha_pinning_required"] = true
+	}
+	if err := c.rawDo("PUT", fmt.Sprintf("repos/%s/%s/actions/permissions", owner, repo), perms, nil); err != nil {
+		return err
+	}
+	// PatternsAllowed must not be null in the request body.
+	if selected.PatternsAllowed == nil {
+		selected.PatternsAllowed = []string{}
+	}
+	return c.rawDo("PUT", fmt.Sprintf("repos/%s/%s/actions/permissions/selected-actions", owner, repo), selected, nil)
+}
+
+// rawGet performs a GET for endpoints (or fields) go-github doesn't cover.
+// Callers hold the concurrency semaphore.
+func (c *Client) rawGet(url string, into any) error {
+	return c.rawDo("GET", url, nil, into)
+}
+
+// rawDo performs a request for endpoints (or fields) go-github doesn't cover.
+// Callers hold the concurrency semaphore.
+func (c *Client) rawDo(method, url string, body, into any) error {
+	req, err := c.gh.NewRequest(method, url, body)
+	if err != nil {
+		return err
+	}
+	_, err = c.gh.Do(context.Background(), req, into)
+	return err
 }
 
 // DefaultBranch returns the repo's default branch (e.g. "main").
