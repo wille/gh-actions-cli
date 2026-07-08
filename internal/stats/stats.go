@@ -29,6 +29,10 @@ type WorkflowStats struct {
 	P95Ms       int64    `json:"p95Ms"`
 	MaxMs       int64    `json:"maxMs"`
 	Last        *LastRun `json:"last,omitempty"`
+	// BillableMs is billable GitHub-hosted runner time for the current
+	// billing cycle (not the --since window), keyed by OS ("UBUNTU",
+	// "MACOS", "WINDOWS"). Empty for public repos, where minutes are free.
+	BillableMs map[string]int64 `json:"billableMs,omitempty"`
 }
 
 // JobStats is an aggregated p95 duration for a single job across sampled runs.

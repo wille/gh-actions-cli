@@ -111,14 +111,14 @@ scheduled dependency-update jobs.
 ### `gha stats`
 
 Reports per-workflow run statistics: run count, success rate, p50/p95/slowest
-duration, and the last run.
+duration, billable minutes, and the last run.
 
 ```
 actions/checkout · branch main · since 2026-06-15
 
-WORKFLOW         RUNS  SUCCESS     p50     p95  SLOWEST  LAST
-Build and Test    100     99%   2m 28s  3m 40s  6m 02s  ✓ 2h ago
-Dependabot         50     20%   1m 39s   2m 1s   2m 1s  ✗ 4d ago
+WORKFLOW         RUNS  SUCCESS     p50     p95  SLOWEST  BILLABLE  LAST
+Build and Test    100     99%   2m 28s  3m 40s   6m 02s    2h 14m  ✓ 2h ago
+Dependabot         50     20%   1m 39s   2m 1s    2m 1s       31m  ✗ 4d ago
 ```
 
 - `--repo owner/repo` — target a repo other than the current git remote. A host
@@ -128,7 +128,16 @@ Dependabot         50     20%   1m 39s   2m 1s   2m 1s  ✗ 4d ago
 - `--jobs` — per-job breakdown for the slowest workflow.
 - `--json` — machine-readable output.
 
-Durations are wall-clock time, not billable minutes.
+Durations are wall-clock time. Billable GitHub-hosted runner minutes are shown
+when GitHub reports them — private repos only, and always for the current
+billing cycle rather than the `--since` window. Organizations migrated to
+GitHub's enhanced billing platform no longer get per-workflow billing data, so
+there the `BILLABLE` column is replaced by a repo-level month-to-date summary
+from the billing usage report:
+
+```
+Billable 2026-07 (repo total): 23h 57m — Actions Linux 19h 2m · Actions Linux 4-core 4h 55m · $6.83 net
+```
 
 ## Authentication
 

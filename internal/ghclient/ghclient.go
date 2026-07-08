@@ -182,6 +182,81 @@ func (c *Client) ListTags(owner, repo string) ([]string, error) {
 	return v.([]string), nil
 }
 
+// WorkflowBillableMs returns a workflow's billable GitHub-hosted runner
+// milliseconds for the current billing cycle, keyed by OS ("UBUNTU", "MACOS",
+// "WINDOWS"). The map is empty for public repos, where Actions minutes are
+// free and GitHub reports no billable usage.
+func (c *Client) WorkflowBillableMs(owner, repo string, workflowID int64) (map[string]int64, error) {
+	c.acquire()
+	defer c.release()
+	usage, _, err := c.gh.Actions.GetWorkflowUsageByID(context.Background(), owner, repo, workflowID)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]int64{}
+	if usage.Billable != nil {
+		for osName, bill := range *usage.Billable {
+			if ms := bill.GetTotalMS(); ms > 0 {
+				out[osName] = ms
+			}
+		}
+	}
+	return out, nil
+}
+
+// RepoBillableUsage is a repo's billed Actions minutes for one calendar month,
+// aggregated from the enhanced billing platform's usage report.
+type RepoBillableUsage struct {
+	MinutesBySKU map[string]float64 // e.g. "Actions Linux", "Actions Linux 4-core"
+	NetUSD       float64            // amount actually charged after discounts/included minutes
+}
+
+// RepoBillableMinutes returns the repo's billed GitHub-hosted runner minutes
+// for the given month via the enhanced billing platform's usage report
+// (GET /organizations/{org}/settings/billing/usage). This is the successor to
+// the per-workflow timing endpoint, which always reports empty billable data
+// for owners migrated to the new platform; the report is repo-granular only.
+// Falls back to the user-owner variant when the owner is not an organization.
+func (c *Client) RepoBillableMinutes(owner, repo string, year int, month int) (RepoBillableUsage, error) {
+	usage, err := c.billableUsage("organizations", owner, repo, year, month)
+	if err != nil {
+		return c.billableUsage("users", owner, repo, year, month)
+	}
+	return usage, nil
+}
+
+func (c *Client) billableUsage(ownerKind, owner, repo string, year, month int) (RepoBillableUsage, error) {
+	c.acquire()
+	defer c.release()
+	u := fmt.Sprintf("%s/%s/settings/billing/usage?year=%d&month=%d", ownerKind, owner, year, month)
+	req, err := c.gh.NewRequest("GET", u, nil)
+	if err != nil {
+		return RepoBillableUsage{}, err
+	}
+	var report struct {
+		UsageItems []struct {
+			Product        string  `json:"product"`
+			SKU            string  `json:"sku"`
+			Quantity       float64 `json:"quantity"`
+			UnitType       string  `json:"unitType"`
+			NetAmount      float64 `json:"netAmount"`
+			RepositoryName string  `json:"repositoryName"`
+		} `json:"usageItems"`
+	}
+	if _, err := c.gh.Do(context.Background(), req, &report); err != nil {
+		return RepoBillableUsage{}, err
+	}
+	usage := RepoBillableUsage{MinutesBySKU: map[string]float64{}}
+	for _, item := range report.UsageItems {
+		if item.Product != "actions" || item.UnitType != "Minutes" || item.RepositoryName != repo {
+			continue
+		}
+		usage.MinutesBySKU[item.SKU] += item.Quantity
+		usage.NetUSD += item.NetAmount
+	}
+	return usage, nil
+}
+
 // DefaultBranch returns the repo's default branch (e.g. "main").
 func (c *Client) DefaultBranch(owner, repo string) (string, error) {
 	c.acquire()

@@ -3,6 +3,7 @@ package command
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -60,6 +61,16 @@ type statsJSON struct {
 	Branch    string                `json:"branch"`
 	Since     string                `json:"since"`
 	Workflows []stats.WorkflowStats `json:"workflows"`
+	// Billable is the repo-level month-to-date fallback used when the
+	// per-workflow timing endpoint reports nothing (owners on GitHub's
+	// enhanced billing platform).
+	Billable *billableJSON `json:"billable,omitempty"`
+}
+
+type billableJSON struct {
+	Month        string             `json:"month"` // e.g. "2026-07"
+	MinutesBySKU map[string]float64 `json:"minutesBySku"`
+	NetUSD       float64            `json:"netUsd"`
 }
 
 // RunStats reports workflow run health and timing.
@@ -140,7 +151,11 @@ func RunStats(workflowArg string, opts StatsOptions) error {
 			if runs, err := gh.ListWorkflowRuns(owner, repoName, w.ID, branch, since); err == nil {
 				samples = toSamples(runs)
 			}
-			results[i] = wfResult{meta: w, stats: stats.Summarize(w.Name, samples)}
+			st := stats.Summarize(w.Name, samples)
+			if billable, err := gh.WorkflowBillableMs(owner, repoName, w.ID); err == nil && len(billable) > 0 {
+				st.BillableMs = billable
+			}
+			results[i] = wfResult{meta: w, stats: st}
 			mu.Lock()
 			doneN++
 			spin.Message(fmt.Sprintf("Fetching runs (%d/%d workflows)", doneN, total))
@@ -148,6 +163,29 @@ func RunStats(workflowArg string, opts StatsOptions) error {
 		}(i, w)
 	}
 	wg.Wait()
+
+	// Owners migrated to GitHub's enhanced billing platform always report
+	// empty per-workflow billable data (the timing endpoint is deprecated
+	// there), so fall back to the repo-level monthly usage report.
+	anyWorkflowBillable := false
+	for _, res := range results {
+		if len(res.stats.BillableMs) > 0 {
+			anyWorkflowBillable = true
+			break
+		}
+	}
+	var repoBillable *billableJSON
+	if !anyWorkflowBillable {
+		spin.Message("Fetching billable usage")
+		now := time.Now()
+		if u, err := gh.RepoBillableMinutes(owner, repoName, now.Year(), int(now.Month())); err == nil && len(u.MinutesBySKU) > 0 {
+			repoBillable = &billableJSON{
+				Month:        now.Format("2006-01"),
+				MinutesBySKU: u.MinutesBySKU,
+				NetUSD:       math.Round(u.NetUSD*100) / 100,
+			}
+		}
+	}
 
 	spin.Stop(fmt.Sprintf("Analyzed %d workflow(s) on %s.", total, branch))
 
@@ -157,7 +195,7 @@ func RunStats(workflowArg string, opts StatsOptions) error {
 	})
 
 	if opts.JSON {
-		out := statsJSON{Owner: owner, Repo: repoName, Branch: branch, Since: sinceLabel, Workflows: make([]stats.WorkflowStats, len(results))}
+		out := statsJSON{Owner: owner, Repo: repoName, Branch: branch, Since: sinceLabel, Billable: repoBillable, Workflows: make([]stats.WorkflowStats, len(results))}
 		for i, r := range results {
 			out.Workflows[i] = r.stats
 		}
@@ -173,6 +211,9 @@ func RunStats(workflowArg string, opts StatsOptions) error {
 		ui.Bold(fmt.Sprintf("%s/%s", owner, repoName)),
 		ui.Dim(fmt.Sprintf("· branch %s · since %s", branch, sinceLabel)))
 	renderTable(results, host, owner, repoName)
+	if repoBillable != nil {
+		renderRepoBillable(*repoBillable)
+	}
 
 	if opts.Jobs {
 		focus := results[0]
@@ -212,8 +253,18 @@ func toSamples(runs []ghclient.WorkflowRun) []stats.RunSample {
 func renderTable(results []wfResult, host, owner, repoName string) {
 	type row struct {
 		name, runs, success, p50, p95, slowest string
+		billable                               string
 		url                                    string
 		last                                   string
+	}
+	// Billable minutes only exist for private repos (public minutes are
+	// free); hide the column entirely when no workflow reports any.
+	showBillable := false
+	for _, res := range results {
+		if len(res.stats.BillableMs) > 0 {
+			showBillable = true
+			break
+		}
 	}
 	rows := make([]row, len(results))
 	for i, res := range results {
@@ -227,6 +278,9 @@ func renderTable(results []wfResult, host, owner, repoName string) {
 		} else {
 			rw.success, rw.p50, rw.p95, rw.slowest = "—", "—", "—", "—"
 		}
+		if showBillable {
+			rw.billable = fmtBillable(s.BillableMs)
+		}
 		if s.Last != nil {
 			sym := ui.Green("✓")
 			if !s.Last.Success {
@@ -239,13 +293,14 @@ func renderTable(results []wfResult, host, owner, repoName string) {
 		rows[i] = rw
 	}
 
-	w := struct{ name, runs, success, p50, p95, slowest int }{
-		name:    len("WORKFLOW"),
-		runs:    len("RUNS"),
-		success: len("SUCCESS"),
-		p50:     len("p50"),
-		p95:     len("p95"),
-		slowest: len("SLOWEST"),
+	w := struct{ name, runs, success, p50, p95, slowest, billable int }{
+		name:     len("WORKFLOW"),
+		runs:     len("RUNS"),
+		success:  len("SUCCESS"),
+		p50:      len("p50"),
+		p95:      len("p95"),
+		slowest:  len("SLOWEST"),
+		billable: len("BILLABLE"),
 	}
 	for _, r := range rows {
 		w.name = max(w.name, utf8.RuneCountInString(r.name))
@@ -254,18 +309,22 @@ func renderTable(results []wfResult, host, owner, repoName string) {
 		w.p50 = max(w.p50, utf8.RuneCountInString(r.p50))
 		w.p95 = max(w.p95, utf8.RuneCountInString(r.p95))
 		w.slowest = max(w.slowest, utf8.RuneCountInString(r.slowest))
+		w.billable = max(w.billable, utf8.RuneCountInString(r.billable))
 	}
 
-	header := strings.Join([]string{
+	headerCols := []string{
 		padRight("WORKFLOW", w.name),
 		padLeft("RUNS", w.runs),
 		padLeft("SUCCESS", w.success),
 		padLeft("p50", w.p50),
 		padLeft("p95", w.p95),
 		padLeft("SLOWEST", w.slowest),
-		"LAST",
-	}, "  ")
-	fmt.Println(ui.Bold(header))
+	}
+	if showBillable {
+		headerCols = append(headerCols, padLeft("BILLABLE", w.billable))
+	}
+	headerCols = append(headerCols, "LAST")
+	fmt.Println(ui.Bold(strings.Join(headerCols, "  ")))
 
 	for _, r := range rows {
 		// Pad on plain text, then colorize, so ANSI codes don't break alignment.
@@ -280,17 +339,69 @@ func renderTable(results []wfResult, host, owner, repoName string) {
 		if n := w.name - utf8.RuneCountInString(r.name); n > 0 {
 			nameCell += strings.Repeat(" ", n)
 		}
-		line := strings.Join([]string{
+		cols := []string{
 			nameCell,
 			padLeft(r.runs, w.runs),
 			successCell,
 			padLeft(r.p50, w.p50),
 			padLeft(r.p95, w.p95),
 			padLeft(r.slowest, w.slowest),
-			r.last,
-		}, "  ")
-		fmt.Println(line)
+		}
+		if showBillable {
+			cols = append(cols, padLeft(r.billable, w.billable))
+		}
+		cols = append(cols, r.last)
+		fmt.Println(strings.Join(cols, "  "))
 	}
+	if showBillable {
+		fmt.Println(ui.Dim("BILLABLE = GitHub-hosted runner minutes this billing cycle (all branches, not the --since window)."))
+	}
+}
+
+// renderRepoBillable prints the repo-level month-to-date billable summary,
+// largest SKU first, with the net charge when nonzero.
+func renderRepoBillable(b billableJSON) {
+	type sku struct {
+		name    string
+		minutes float64
+	}
+	var skus []sku
+	var totalMin float64
+	for name, m := range b.MinutesBySKU {
+		skus = append(skus, sku{name, m})
+		totalMin += m
+	}
+	sort.Slice(skus, func(i, j int) bool { return skus[i].minutes > skus[j].minutes })
+
+	parts := make([]string, len(skus))
+	for i, s := range skus {
+		parts[i] = fmt.Sprintf("%s %s", s.name, fmtBillable(map[string]int64{"": int64(s.minutes * 60_000)}))
+	}
+	line := fmt.Sprintf("Billable %s (repo total): %s — %s",
+		b.Month, fmtBillable(map[string]int64{"": int64(totalMin * 60_000)}), strings.Join(parts, " · "))
+	if b.NetUSD >= 0.01 {
+		line += fmt.Sprintf(" · $%.2f net", b.NetUSD)
+	}
+	fmt.Println("\n" + line)
+	fmt.Println(ui.Dim("Repo-level month-to-date, all branches. GitHub's enhanced billing platform no longer exposes per-workflow billable data."))
+}
+
+// fmtBillable renders billable runner time as whole minutes ("42m", "3h 5m"),
+// since GitHub bills each job rounded up to the minute. "—" when the repo
+// reports no billable usage for the workflow.
+func fmtBillable(byOS map[string]int64) string {
+	var total int64
+	for _, ms := range byOS {
+		total += ms
+	}
+	if total == 0 {
+		return "—"
+	}
+	minutes := (total + 59_999) / 60_000
+	if minutes >= 60 {
+		return fmt.Sprintf("%dh %dm", minutes/60, minutes%60)
+	}
+	return fmt.Sprintf("%dm", minutes)
 }
 
 func renderJobs(gh *ghclient.Client, owner, repoName, branch string, meta ghclient.WorkflowMeta, since time.Time) error {
