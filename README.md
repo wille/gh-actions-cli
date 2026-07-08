@@ -4,8 +4,8 @@
 [![Go version](https://img.shields.io/github/go-mod/go-version/wille/gh-actions-cli)](go.mod)
 [![License: MIT](https://img.shields.io/github/license/wille/gh-actions-cli)](LICENSE)
 
-`gha` is a CLI for managing the GitHub Actions used across
-your repositories — straight from the terminal:
+`gha` helps you run GitHub Actions securely — pinning, policies, updates, and
+stats for every action your workflows use, straight from the terminal:
 
 - 📌 **Pin** actions to immutable commit SHAs (and fail CI on anything unpinned).
 - ⬆️ **Interactively update** actions to their latest releases.
