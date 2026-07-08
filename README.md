@@ -1,7 +1,5 @@
 # gha — GitHub Actions CLI
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/wille/gh-actions-cli.svg)](https://pkg.go.dev/github.com/wille/gh-actions-cli)
-[![Go Report Card](https://goreportcard.com/badge/github.com/wille/gh-actions-cli)](https://goreportcard.com/report/github.com/wille/gh-actions-cli)
 [![Latest release](https://img.shields.io/github/v/release/wille/gh-actions-cli?sort=semver)](https://github.com/wille/gh-actions-cli/releases)
 [![Go version](https://img.shields.io/github/go-mod/go-version/wille/gh-actions-cli)](go.mod)
 [![License: MIT](https://img.shields.io/github/license/wille/gh-actions-cli)](LICENSE)
